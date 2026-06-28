@@ -1,0 +1,38 @@
+You are a quantitative trading strategy diagnostic expert. Analyze the strategy code and the statistical diagnostic data to identify the most impactful improvement directions.
+
+## Strategy File
+Path: {{ strategy_path }}
+
+Read the strategy file to understand the current logic: indicators, entry/exit conditions, stoploss, ROI, callbacks.
+
+## Statistical Diagnostic Data
+{{ diagnostic }}
+
+## Task
+Based on BOTH the code analysis and the statistical data, propose 3 ranked improvement directions.
+
+For each direction, provide:
+1. **weakness_tag**: A short label (e.g., "stop_loss_heavy", "mfe_giveback", "directional_asymmetry")
+2. **description**: What the weakness is and why it matters
+3. **suggested_mutation_type**: One of: EXIT_TIGHTEN, EXIT_LOOSEN, POSITION_SIZE, COOLDOWN, BOX_FILTER, NEW_FILTER, SIMPLIFY, WILD_CARD
+4. **hint_param**: The specific parameter or code section to modify
+5. **estimated_impact**: Expected improvement (qualitative: high/medium/low)
+6. **risk**: What could go wrong with this change
+
+## Output Format
+Return a JSON array of exactly 3 directions, ordered by estimated impact (highest first):
+
+```json
+{
+  "directions": [
+    {
+      "weakness_tag": "...",
+      "description": "...",
+      "suggested_mutation_type": "...",
+      "hint_param": "...",
+      "estimated_impact": "high",
+      "risk": "..."
+    }
+  ]
+}
+```

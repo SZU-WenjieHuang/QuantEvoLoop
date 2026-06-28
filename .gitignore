@@ -23,16 +23,15 @@ env/
 Thumbs.db
 
 # QuantEvoLoop workspace artifacts
-workspace/
-*.zip
-generations/
-champion/
-campaigns/
-knowledge/
-logs/
-checkpoint.json
-cost_log.json
-state.json
+/workspace/
+/generations/
+/champion/
+/campaigns/
+/knowledge/
+/logs/
+/checkpoint.json
+/cost_log.json
+/state.json
 
 # Environment variables
 .env
