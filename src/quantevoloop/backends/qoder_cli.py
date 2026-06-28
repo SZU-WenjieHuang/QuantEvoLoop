@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from quantevoloop.backends.base import (
     AnalysisResult,
+    BackendMutationContext,
     CodeAgentBackend,
     JudgeResult,
     MutationResult,
@@ -45,14 +46,15 @@ class QoderCliBackend(CodeAgentBackend):
     async def mutate_strategy(
         self,
         strategy_path: Path,
-        hypothesis: dict[str, Any],
-        context: dict[str, Any],
+        hypothesis: str,
+        context: BackendMutationContext | None = None,
     ) -> MutationResult:
+        ctx = context or BackendMutationContext()
         template = self._jinja_env.get_template("mutation.j2")
         prompt = template.render(
             strategy_path=str(strategy_path),
-            hypothesis=json.dumps(hypothesis, indent=2, ensure_ascii=False),
-            context=json.dumps(context, indent=2, ensure_ascii=False),
+            hypothesis=hypothesis,
+            context=json.dumps(ctx.to_dict(), indent=2, ensure_ascii=False),
         )
 
         workspace = strategy_path.parent

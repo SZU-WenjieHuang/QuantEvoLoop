@@ -6,6 +6,7 @@ Config-driven: no hardcoded paths. Uses BacktestEngine abstraction.
 
 from __future__ import annotations
 
+import datetime as dt
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +42,46 @@ DEFAULT_FOLDS = [
 
 PASS_STD_MULTIPLIER = 1.5
 PASS_MEAN_TOLERANCE = 0.95  # allows 5% cross-fold loss
+
+
+def generate_folds(
+    train_start: str,
+    train_end: str,
+    n_folds: int = 3,
+    overlap_months: int = 6,
+) -> list[tuple[str, str]]:
+    """Generate overlapping rolling-window fold timeranges from train period.
+
+    Example (train 20220101-20240701, 3 folds, 6-month overlap):
+      fold1: 20220101-20230101
+      fold2: 20220701-20230701
+      fold3: 20230101-20240101
+    """
+    start = dt.datetime.strptime(train_start, "%Y%m%d")
+    end = dt.datetime.strptime(train_end, "%Y%m%d")
+    total_months = (end.year - start.year) * 12 + (end.month - start.month)
+
+    if n_folds <= 1 or total_months < 6:
+        return [(train_start, train_end)]
+
+    # Each fold covers ~half the train period
+    fold_span_months = max(total_months // 2, 6)
+    step_months = max((total_months - fold_span_months) // max(n_folds - 1, 1), 1)
+
+    folds = []
+    for i in range(n_folds):
+        fold_start = start + dt.timedelta(days=30 * step_months * i)
+        fold_end = fold_start + dt.timedelta(days=30 * fold_span_months)
+        if fold_end > end:
+            fold_end = end
+        if fold_start >= end:
+            break
+        folds.append((
+            fold_start.strftime("%Y%m%d"),
+            fold_end.strftime("%Y%m%d"),
+        ))
+
+    return folds or [(train_start, train_end)]
 
 
 @dataclass
@@ -112,3 +153,41 @@ def validate_walkforward(
         candidate_summary=cand_summary,
         champion_summary=champion_summary,
     )
+
+
+async def run_walkforward_backtests(
+    engine: Any,  # BacktestEngine
+    strategy_path: Path,
+    folds: list[tuple[str, str]],
+) -> list[FoldResult]:
+    """Run backtests for each fold and return FoldResults.
+
+    Args:
+        engine: BacktestEngine instance.
+        strategy_path: Path to the strategy .py file.
+        folds: List of (fold_start, fold_end) timerange tuples.
+
+    Returns:
+        List of FoldResult for each fold.
+    """
+    results = []
+    for fold_idx, (fold_start, fold_end) in enumerate(folds):
+        timerange = f"{fold_start}-{fold_end}"
+        fold_name = f"fold_{fold_idx}"
+        try:
+            bt = await engine.run_backtest(strategy_path, timerange)
+            results.append(FoldResult(
+                fold_name=fold_name,
+                timerange=timerange,
+                sharpe=bt.sharpe,
+                total_trades=bt.total_trades,
+                cagr=bt.cagr,
+                error=bt.error,
+            ))
+        except Exception as e:
+            results.append(FoldResult(
+                fold_name=fold_name,
+                timerange=timerange,
+                error=str(e),
+            ))
+    return results

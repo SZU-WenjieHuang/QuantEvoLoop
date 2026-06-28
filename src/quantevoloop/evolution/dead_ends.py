@@ -75,3 +75,13 @@ class DeadEndTracker:
             lines.append(f"| {e.gen} | {e.mutation_type} | {e.hypothesis_tag} | "
                          f"{e.failure_tag} | {e.reason} |")
         return "\n".join(lines)
+
+    def to_context_string(self) -> str:
+        """Generate a concise context string for LLM prompts."""
+        if not self._entries:
+            return "No known dead ends."
+        lines = ["Known dead-end mutations (AVOID these directions):"]
+        for e in self._entries[-10:]:
+            lines.append(f"  - {e.mutation_type} on {e.hypothesis_tag}: "
+                         f"failed with {e.failure_tag}")
+        return "\n".join(lines)

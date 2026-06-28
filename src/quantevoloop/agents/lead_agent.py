@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..backends.base import CodeAgentBackend
+from ..backends.base import BackendMutationContext, CodeAgentBackend
 from ..evaluation.diagnostics import DiagnosticReport, diagnose
 
 
@@ -88,10 +88,21 @@ class LeadAgent:
         knowledge_context: str = "",
     ) -> dict[str, Any]:
         """Delegate a mutation to the backend."""
-        return await self.backend.mutate_strategy(
-            strategy_path=strategy_path,
+        ctx = BackendMutationContext(
             hypothesis=hypothesis.description,
             mutation_type=hypothesis.mutation_type,
             output_dir=gen_dir,
             knowledge_context=knowledge_context,
         )
+        result = await self.backend.mutate_strategy(
+            strategy_path=strategy_path,
+            hypothesis=hypothesis.description,
+            context=ctx,
+        )
+        return {
+            "success": result.success,
+            "cost_usd": result.cost_usd,
+            "error": result.error,
+            "session_id": result.session_id,
+            "raw_output": result.raw_output,
+        }

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..backends.base import CodeAgentBackend
+from ..backends.base import CodeAgentBackend, BackendMutationContext
 
 
 @dataclass
@@ -48,30 +48,39 @@ class SubAgent:
         """Execute the mutation and return result."""
         t0 = time.time()
         try:
-            result = await self.backend.mutate_strategy(
-                strategy_path=champion_strategy,
+            # Copy champion strategy to lane dir before mutating
+            gen_dir.mkdir(parents=True, exist_ok=True)
+            mutated = gen_dir / "strategy.py"
+            if champion_strategy.exists():
+                mutated.write_text(champion_strategy.read_text(encoding="utf-8"), encoding="utf-8")
+            else:
+                mutated.write_text("# placeholder\nclass Strategy:\n    pass\n")
+
+            ctx = BackendMutationContext(
                 hypothesis=hypothesis,
                 mutation_type=mutation_type,
                 output_dir=gen_dir,
                 knowledge_context=knowledge_context,
             )
+            result = await self.backend.mutate_strategy(
+                strategy_path=mutated,
+                hypothesis=hypothesis,
+                context=ctx,
+            )
             duration = time.time() - t0
-            cost = result.get("cost_usd", 0.0)
 
-            # Check if the mutated strategy file exists
-            mutated = gen_dir / "strategy.py"
-            if not mutated.exists():
+            if not result.success:
                 return SubAgentResult(
                     lane_id=self.lane_id, gen_id=gen_id,
                     success=False, duration_s=duration,
-                    cost_usd=cost, error="mutated strategy.py not found",
+                    cost_usd=result.cost_usd, error=result.error,
                 )
 
             return SubAgentResult(
                 lane_id=self.lane_id, gen_id=gen_id,
                 success=True, strategy_path=mutated,
-                duration_s=duration, cost_usd=cost,
-                metadata=result,
+                duration_s=duration, cost_usd=result.cost_usd,
+                metadata={"session_id": result.session_id, "raw": result.raw_output},
             )
         except Exception as e:
             return SubAgentResult(

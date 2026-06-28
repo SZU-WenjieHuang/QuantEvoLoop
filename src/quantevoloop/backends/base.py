@@ -31,6 +31,35 @@ class MutationResult:
     latency_seconds: float = 0.0
     error: str = ""
     turns_used: int = 0
+    strategy_path: Path | None = None
+
+
+@dataclass
+class BackendMutationContext:
+    """Context passed to the backend for a mutation call.
+
+    Bundles all the information the CLI Agent needs to perform a mutation:
+    hypothesis description, mutation type tag, output directory for the
+    mutated strategy, and accumulated knowledge from prior campaigns.
+    """
+
+    hypothesis: str = ""
+    mutation_type: str = ""
+    output_dir: Path | None = None
+    knowledge_context: str = ""
+    dead_ends_context: str = ""
+    champion_metrics: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for Jinja2 template rendering."""
+        return {
+            "hypothesis": self.hypothesis,
+            "mutation_type": self.mutation_type,
+            "output_dir": str(self.output_dir) if self.output_dir else "",
+            "knowledge_context": self.knowledge_context,
+            "dead_ends_context": self.dead_ends_context,
+            "champion_metrics": self.champion_metrics or {},
+        }
 
 
 @dataclass
@@ -69,15 +98,16 @@ class CodeAgentBackend(ABC):
     async def mutate_strategy(
         self,
         strategy_path: Path,
-        hypothesis: dict[str, Any],
-        context: dict[str, Any],
+        hypothesis: str,
+        context: BackendMutationContext | None = None,
     ) -> MutationResult:
         """Modify strategy code according to the given hypothesis.
 
         Args:
             strategy_path: Path to the strategy .py file to modify.
-            hypothesis: Structured hypothesis dict (mutation_type, change, why, etc.).
-            context: Additional context (knowledge, dead_ends, champion metrics, etc.).
+            hypothesis: Human-readable hypothesis description.
+            context: Optional BackendMutationContext with mutation_type,
+                     output_dir, knowledge, dead_ends, champion metrics.
 
         Returns:
             MutationResult with success status and metadata.
@@ -143,38 +173,62 @@ class CodeAgentBackend(ABC):
         cmd: list[str],
         cwd: Path | None = None,
         timeout: int | None = None,
+        retries: int = 1,
     ) -> tuple[str, str, int]:
-        """Run a subprocess command asynchronously.
+        """Run a subprocess command asynchronously with optional retry.
 
         Returns:
             Tuple of (stdout, stderr, return_code).
         """
         timeout = timeout or self.config.timeout_seconds
+        last_err = ""
 
-        logger.info("Running: %s", " ".join(cmd[:5]) + ("..." if len(cmd) > 5 else ""))
+        for attempt in range(1 + retries):
+            if attempt > 0:
+                wait = min(2 ** attempt, 8)
+                logger.info("Retry %d/%d after %ds", attempt, retries, wait)
+                await asyncio.sleep(wait)
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(cwd) if cwd else None,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
-            return (
-                stdout.decode("utf-8", errors="replace"),
-                stderr.decode("utf-8", errors="replace"),
-                proc.returncode or 0,
-            )
-        except asyncio.TimeoutError:
-            logger.error("Backend call timed out after %ds", timeout)
-            proc.kill()  # type: ignore[possibly-undefined]
-            return ("", f"Timeout after {timeout}s", 1)
-        except FileNotFoundError:
-            return ("", f"CLI not found: {cmd[0]}", 127)
+            logger.info("Running: %s", " ".join(cmd[:5]) + ("..." if len(cmd) > 5 else ""))
+
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(cwd) if cwd else None,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout,
+                )
+                rc = proc.returncode or 0
+                if rc == 0:
+                    return (
+                        stdout.decode("utf-8", errors="replace"),
+                        stderr.decode("utf-8", errors="replace"),
+                        0,
+                    )
+                last_err = stderr.decode("utf-8", errors="replace")
+                # Only retry on non-zero exit, not on every failure
+                if attempt < retries:
+                    continue
+                return (
+                    stdout.decode("utf-8", errors="replace"),
+                    last_err,
+                    rc,
+                )
+            except asyncio.TimeoutError:
+                logger.error("Backend call timed out after %ds", timeout)
+                try:
+                    proc.kill()  # type: ignore[possibly-undefined]
+                except ProcessLookupError:
+                    pass
+                last_err = f"Timeout after {timeout}s"
+            except FileNotFoundError:
+                return ("", f"CLI not found: {cmd[0]}", 127)
+
+        return ("", last_err, 1)
 
     def _parse_json_output(self, stdout: str) -> dict[str, Any]:
         """Parse JSON output from CLI, handling malformed responses."""
