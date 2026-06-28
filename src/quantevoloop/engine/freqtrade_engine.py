@@ -134,41 +134,78 @@ class FreqtradeEngine(BacktestEngine):
 
     @staticmethod
     def _parse_result(result_file: Path, timerange: str, strategy_name: str) -> BacktestResult:
-        """Parse freqtrade backtest result JSON into BacktestResult."""
+        """Parse freqtrade backtest result JSON into BacktestResult.
+
+        Handles multiple freqtrade output formats:
+        - Modern: {"strategy": {"StrategyName": {...}, "metadata": {...}}}
+        - Flat:   {"strategy": {"sharpe": ..., "trades": [...]}}
+        - Array:  {"strategy": [{"key": "StrategyName", ...}]}
+        """
         try:
             with open(result_file) as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             return BacktestResult(error=f"Failed to parse result: {e}", timerange=timerange)
 
-        # Freqtrade result structure varies by version; handle gracefully
+        # Locate strategy data — handle multiple freqtrade output formats
         strategy_data = data.get("strategy", {})
-        if isinstance(strategy_data, dict) and strategy_name in strategy_data:
-            strategy_data = strategy_data[strategy_name]
+
+        if isinstance(strategy_data, dict):
+            if strategy_name in strategy_data:
+                strategy_data = strategy_data[strategy_name]
+            elif "metadata" in strategy_data and len(strategy_data) == 2:
+                for k, v in strategy_data.items():
+                    if k != "metadata" and isinstance(v, dict):
+                        strategy_data = v
+                        break
+        elif isinstance(strategy_data, list):
+            for item in strategy_data:
+                if isinstance(item, dict) and item.get("key") == strategy_name:
+                    strategy_data = item
+                    break
+            else:
+                strategy_data = strategy_data[0] if strategy_data else {}
+
+        if not isinstance(strategy_data, dict):
+            strategy_data = {}
 
         trades = strategy_data.get("trades", [])
         total_trades = len(trades)
 
-        # Extract key metrics
-        sharpe = strategy_data.get("sharpe", 0.0) or 0.0
-        cagr = strategy_data.get("cagr", 0.0) or 0.0
-        max_dd = strategy_data.get("max_drawdown", 0.0) or 0.0
-        win_rate = strategy_data.get("winrate", 0.0) or 0.0
-        sortino = strategy_data.get("sortino", 0.0) or 0.0
-        calmar = strategy_data.get("calmar", 0.0) or 0.0
-        profit_factor = strategy_data.get("profit_factor", 0.0) or 0.0
-        total_profit = strategy_data.get("profit_total", 0.0) or 0.0
+        # Extract key metrics — try multiple field name variants
+        def _get(d: dict, *keys: str, default: float = 0.0) -> float:
+            for k in keys:
+                v = d.get(k)
+                if v is not None:
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        continue
+            return default
+
+        sharpe = _get(strategy_data, "sharpe", "sharpe_ratio", "sharpe_ratio_1d")
+        cagr = _get(strategy_data, "cagr", "compound_annual_growth_ratio",
+                     "compound_annual_growth_ratio_1d")
+        max_dd = _get(strategy_data, "max_drawdown", "max_drawdown_account", "max_drawdown_pct")
+        win_rate = _get(strategy_data, "winrate", "win_rate")
+        sortino = _get(strategy_data, "sortino", "sortino_ratio", "sortino_ratio_1d")
+        calmar = _get(strategy_data, "calmar", "calmar_ratio", "calmar_ratio_1d")
+        profit_factor = _get(strategy_data, "profit_factor", "profit_all_ratio")
+        total_profit = _get(strategy_data, "profit_total", "profit_all_pct", "profit_total_abs")
+        backtest_days = _get(strategy_data, "backtest_days", default=365.0)
 
         return BacktestResult(
             sharpe=sharpe,
             cagr=cagr,
             max_drawdown=abs(max_dd),
+            max_drawdown_account=abs(max_dd),
             total_trades=total_trades,
             win_rate=win_rate,
             profit_factor=profit_factor,
             sortino=sortino,
             calmar=calmar,
-            total_profit_pct=total_profit * 100,
+            total_profit_pct=total_profit * 100 if abs(total_profit) < 10 else total_profit,
+            backtest_days=backtest_days,
             trades=trades,
             raw_output=data,
             timerange=timerange,
