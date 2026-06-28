@@ -1,0 +1,79 @@
+# QuantEvoLoop Configuration Example
+# Copy this file and modify for your project.
+
+# === Paths ===
+workspace_dir: ./evo_workspace
+strategy_path: ./user_data/strategies/MyStrategy.py
+python_bin: python
+backtest_config: ./user_data/config_backtest.json
+
+# === Data Splits ===
+data_splits:
+  holdout_start: "20210101"
+  holdout_end: "20220101"
+  train_start: "20220101"
+  train_end: "20240701"
+  test_start: "20240701"
+  test_end: "20260101"
+
+# === Score Weights ===
+# Score = sharpe_w * z(sharpe) + cagr_w * z(cagr) - dd_w * z(max_dd)
+score_weights:
+  sharpe: 0.5
+  cagr: 0.3
+  max_dd: 0.1
+
+# === Statistical Gates ===
+statistical_gates:
+  psr_min: 0.85                # Probabilistic Sharpe Ratio threshold (test)
+  bootstrap_ci: 0.70           # Bootstrap CI threshold (test)
+  psr_min_train: 0.80          # PSR threshold (train)
+  bootstrap_ci_train: 0.65     # Bootstrap CI threshold (train)
+  max_dd_ceiling_factor: 1.25  # Candidate DD <= champion DD * factor
+  min_trades: 50               # Minimum trade count
+  max_directional_gap: 0.6     # |test_sharpe - train_sharpe|
+
+# === Evolution ===
+n_lanes: 3                     # Number of parallel evolution lanes
+max_campaign_iter: 20          # Max iterations per campaign
+max_total_generations: null    # null = unlimited
+promotion_threshold: 0.05      # Minimum score improvement for promotion
+
+# === Backend (REQUIRED — choose one) ===
+backend:
+  # Options: "claude-code" | "codex" | "qoder-cli"
+  type: claude-code
+  cli_path: claude             # Path to CLI binary (or just the name if in PATH)
+  max_turns: 15                # Max agent loop steps per call
+  timeout_seconds: 300         # Per-call timeout
+  allowed_tools:
+    - Read
+    - Edit
+    - Bash
+  extra_args: []               # Additional CLI flags
+
+# === IM Notifications (optional) ===
+im:
+  telegram_enabled: false
+  telegram_bot_token: ""       # From @BotFather
+  telegram_chat_id: ""         # Your chat ID
+
+  discord_enabled: false
+  discord_bot_token: ""
+  discord_channel_id: ""
+
+  webhook_enabled: false
+  webhook_url: ""              # Generic webhook URL (DingTalk/Feishu/WeChat Work)
+
+  min_notify_level: important  # critical | important | info | debug
+
+# === Cost Tracking ===
+cost:
+  budget_usd: null             # null = unlimited, or set a dollar limit
+  warn_at_pct: 0.80            # Warn when 80% of budget consumed
+  track_per_generation: true
+
+# === Checkpoint ===
+checkpoint:
+  enabled: true
+  auto_save_every: 1           # Save checkpoint every N generations
