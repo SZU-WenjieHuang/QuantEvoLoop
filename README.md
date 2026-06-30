@@ -8,6 +8,14 @@
 
 ---
 
+<p align="center">
+  <img src="docs/architecture.png" alt="QuantEvoLoop Architecture" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/evolution_loop.gif" alt="Evolution Loop" width="800">
+</p>
+
 ## What is QuantEvoLoop?
 
 QuantEvoLoop is an **open-source multi-agent evolutionary framework** that automatically optimizes quantitative trading strategies through hypothesis-driven mutation, rigorous statistical validation, and RL-guided selection.
@@ -19,27 +27,50 @@ Unlike traditional hyperparameter optimizers (Optuna, Hyperopt), QuantEvoLoop tr
 ### 1. Agent-as-Backend Architecture
 Instead of building a custom LLM agent loop, QuantEvoLoop leverages **Claude Code CLI / Codex CLI / Qoder CLI** as "code mutation engines". These production-grade agents provide ReAct reasoning, AST-aware code editing, error recovery, and context management — capabilities that would take months to replicate.
 
-```
-┌────────────────────────────────────────────────────┐
-│                  QuantEvoLoop                       │
-│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐    │
-│  │ Diagnose │→│ Hypothesize│→│   Mutate (CLI)   │   │
-│  └─────────┘  └─────────┘  └─────────────────┘    │
-│        ↓              ↓              ↓              │
-│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐    │
-│  │ Evaluate │→│  Select  │→│    Promote       │    │
-│  └─────────┘  └─────────┘  └─────────────────┘    │
-└────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    A[Diagnose] --> B[Hypothesize]
+    B --> C[Mutate via CLI Agent]
+    C --> D[Evaluate 5-Gate]
+    D --> E{Promote?}
+    E -->|Yes| F[New Champion]
+    E -->|No| G[Dead End / Reject]
+    F --> A
 ```
 
 ### 2. 5-Layer Statistical Gate Pipeline
 Every candidate must survive 5 sequential statistical filters before promotion:
 
-1. **Hard Constraints** — Risk regression, trade count, overfit detection
-2. **Composite Score** — Min-of-segments Sharpe + CAGR − Drawdown
-3. **Probabilistic Sharpe Ratio (PSR)** — Bailey & López de Prado (2014)
-4. **Bootstrap CI + Drop-top-K** — Confidence intervals + concentration risk
-5. **Holdout OOS** — Out-of-sample regime robustness check
+```mermaid
+graph TB
+    C[Candidate Strategy]
+    C --> G1
+    G1[G1: Hard Constraints
+    Risk regression, trade count >= 50,
+    overfit gap check]
+    G1 -->|Pass| G2
+    G1 -->|Fail| R[Reject]
+    G2[G2: Composite Score
+    min-segments Sharpe + CAGR - MaxDD > 0]
+    G2 -->|Pass| G3
+    G2 -->|Fail| R
+    G3[G3: Probabilistic Sharpe Ratio
+    PSR test >= 0.85, PSR train >= 0.80]
+    G3 -->|Pass| G4
+    G3 -->|Fail| R
+    G4[G4: Bootstrap CI + Drop-top-K
+    CI lower bound > 0, top-2 < 50% PnL]
+    G4 -->|Pass| G5
+    G4 -->|Fail| R
+    G5[G5: Walk-Forward + Holdout OOS
+    3-fold consistency, cross-regime check]
+    G5 -->|Pass| P[Promote]
+    G5 -->|Fail| R
+```
+
+<p align="center">
+  <img src="docs/pipeline.png" alt="5-Layer Statistical Gate Pipeline" width="700">
+</p>
 
 ### 3. RL-Inspired UCB1 Selection
 Mutation types are treated as **multi-armed bandit arms**. UCB1 balances exploration of untried mutations vs exploitation of known-good ones, adapting the search strategy based on historical success rates.
@@ -47,32 +78,96 @@ Mutation types are treated as **multi-armed bandit arms**. UCB1 balances explora
 ### 4. Multi-Lane Tournament Selection
 N parallel SubAgent lanes evolve the strategy independently. Each generation, a tournament selects the best candidate across all lanes for potential promotion.
 
+<p align="center">
+  <img src="docs/tournament.gif" alt="Multi-Lane Tournament Selection" width="700">
+</p>
+
 ### 5. Cross-Campaign Knowledge Accumulation
 Structured knowledge base tracks which mutation types work (High-EV) and which are dead ends, informing future campaign planning and avoiding repeated failures.
 
 ### 6. IM-First Monitoring
 Telegram / Discord / Webhook notifications for real-time evolution monitoring — know when a new champion is crowned without watching the terminal.
 
+### Evolution Loop
+
+```mermaid
+sequenceDiagram
+    participant C as Coordinator
+    participant L as LeadAgent
+    participant S as SubAgent x N
+    participant J as JudgeAgent
+    participant T as Tournament
+    participant P as Promoter
+
+    C->>C: Bootstrap Champion (train/test/holdout)
+    loop Each Generation
+        C->>L: Diagnose champion trades
+        L-->>C: Weaknesses + Hypotheses
+        C->>S: Launch N parallel mutations
+        S-->>C: Mutated strategies
+        C->>J: Evaluate each candidate (5 gates)
+        J-->>C: Verdicts + Scores
+        C->>T: Tournament selection
+        T-->>C: Winner (or none)
+        alt Winner found
+            C->>P: Promote new champion
+            C->>C: Update baseline metrics
+        else No winner
+            C->>C: Record rejection
+        end
+        C->>C: Save state + notify IM
+    end
+```
+
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        CLI / Gateway                          │
-│  quantevoloop init | run | diagnose | status | backend-check │
-├──────────┬──────────┬───────────┬────────────┬──────────────┤
-│  Agents  │Selection │ Evolution │ Evaluation │   Channels   │
-│          │          │           │            │              │
-│ LeadAgent│ UCB1     │ Campaign  │ PSR        │ Telegram     │
-│ SubAgent │ Bandit   │ Knowledge │ Bootstrap  │ Discord      │
-│ Judge    │Tournament│ DeadEnds  │ WalkFwd    │ Webhook      │
-│          │Population│ Promoter  │ Holdout    │              │
-├──────────┴──────────┴───────────┴────────────┴──────────────┤
-│                    Backends (CLI Adapters)                     │
-│         Claude Code CLI  |  Codex CLI  |  Qoder CLI          │
-├─────────────────────────────────────────────────────────────┤
-│                    Backtest Engines                           │
-│    Freqtrade (default) | Mock (testing) | Backtrader | Zipline│
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph CLI["CLI / Gateway"]
+        direction LR
+        INIT[init] --- RUN[run] --- DIAG[diagnose] --- STATUS[status] --- GW[gateway]
+    end
+    subgraph Core["Core Modules"]
+        direction LR
+        subgraph Agents
+            LeadAgent
+            SubAgent
+            JudgeAgent
+        end
+        subgraph Selection
+            UCB1
+            Tournament
+            Population
+        end
+        subgraph Evolution
+            Campaign
+            Knowledge
+            DeadEnds
+            Promoter
+        end
+        subgraph Evaluation
+            PSR
+            Bootstrap
+            WalkForward
+            Holdout
+        end
+        subgraph Channels
+            Telegram
+            Discord
+            Webhook
+        end
+    end
+    subgraph Backends["Backends (CLI Adapters)"]
+        direction LR
+        CC[Claude Code] --- CX[Codex CLI] --- QC[Qoder CLI]
+    end
+    subgraph Engines["Backtest Engines"]
+        direction LR
+        FT[Freqtrade] --- MK[Mock] --- BT[Backtrader] --- ZL[Zipline]
+    end
+    CLI --> Core
+    Core --> Backends
+    Core --> Engines
 ```
 
 ## Prerequisites
