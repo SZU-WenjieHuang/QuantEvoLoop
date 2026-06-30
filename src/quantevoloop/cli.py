@@ -2,11 +2,12 @@
 
 Usage:
     quantevoloop init --strategy path/to/strategy.py [--config config.yaml]
-    quantevoloop run [--config config.yaml] [--lanes N] [--backend TYPE]
+    quantevoloop run [--config config.yaml] [--lanes N] [--backend TYPE] [--engine TYPE]
     quantevoloop diagnose [--config config.yaml]
     quantevoloop status [--config config.yaml]
     quantevoloop backend-check [--config config.yaml]
     quantevoloop batch --n 10 [--config config.yaml]
+    quantevoloop gateway [--config config.yaml]  # Start with IM bot
 """
 
 from __future__ import annotations
@@ -76,6 +77,29 @@ def init(strategy: str, config_path: str | None, backend: str, workspace: str):
     ))
 
 
+def _create_engine(config, engine_type: str):
+    """Create the backtest engine based on --engine flag."""
+    if engine_type == "mock":
+        from quantevoloop.engine.mock_engine import MockBacktestEngine
+        return MockBacktestEngine(config)
+    elif engine_type == "freqtrade":
+        from quantevoloop.engine.freqtrade_engine import FreqtradeEngine
+        return FreqtradeEngine(
+            python_bin=str(config.python_bin),
+            freqtrade_config=str(config.backtest_config) if config.backtest_config else None,
+            data_splits=config.data_splits,
+        )
+    elif engine_type == "backtrader":
+        from quantevoloop.engine.backtrader_engine import BacktraderEngine
+        return BacktraderEngine(config.data_splits)
+    elif engine_type == "zipline":
+        from quantevoloop.engine.zipline_engine import ZiplineEngine
+        return ZiplineEngine(config.data_splits)
+    else:
+        from quantevoloop.engine.mock_engine import MockBacktestEngine
+        return MockBacktestEngine(config)
+
+
 @main.command()
 @click.option("--config", "config_path", type=click.Path(exists=True),
               default="evo_workspace/config.yaml", help="Path to config YAML")
@@ -83,10 +107,12 @@ def init(strategy: str, config_path: str | None, backend: str, workspace: str):
 @click.option("--backend", type=click.Choice(["claude-code", "codex", "qoder-cli"]),
               default=None, help="Override backend type")
 @click.option("--max-gens", type=int, default=None, help="Max generations (override config)")
+@click.option("--engine", type=click.Choice(["mock", "freqtrade", "backtrader", "zipline"]),
+              default="mock", help="Backtest engine to use")
 @click.option("--notify", type=click.Choice(["telegram", "discord", "webhook", "none"]),
               default="none", help="Enable IM notifications")
 def run(config_path: str, lanes: int | None, backend: str | None,
-        max_gens: int | None, notify: str):
+        max_gens: int | None, engine: str, notify: str):
     """Start the evolutionary loop."""
     from quantevoloop.config import QuantEvoLoopConfig
 
@@ -103,6 +129,7 @@ def run(config_path: str, lanes: int | None, backend: str | None,
     console.print(Panel(
         f"[bold]QuantEvoLoop v{__version__}[/bold]\n\n"
         f"Backend: {config.backend.type}\n"
+        f"Engine: {engine}\n"
         f"Lanes: {config.n_lanes}\n"
         f"Strategy: {config.strategy_path}\n"
         f"Workspace: {config.workspace_dir}",
@@ -110,17 +137,15 @@ def run(config_path: str, lanes: int | None, backend: str | None,
         border_style="blue",
     ))
 
-    # Wire up the main evolution loop
     from quantevoloop.backends import create_backend
     from quantevoloop.channels import IMNotifier
     from quantevoloop.gateway.coordinator import EvolutionCoordinator
-    from quantevoloop.engine.mock_engine import MockBacktestEngine
 
-    backend = create_backend(config.backend)
-    engine = MockBacktestEngine(config)
+    bk = create_backend(config.backend)
+    eng = _create_engine(config, engine)
     notifier = IMNotifier(config.im) if (config.im.telegram_enabled or config.im.discord_enabled or config.im.webhook_enabled) else None
 
-    coordinator = EvolutionCoordinator(config, backend, engine, notifier)
+    coordinator = EvolutionCoordinator(config, bk, eng, notifier)
 
     async def _run_loop():
         state = await coordinator.run(max_generations=max_gens or config.max_campaign_iter)
@@ -144,10 +169,50 @@ def run(config_path: str, lanes: int | None, backend: str | None,
 def diagnose(config_path: str):
     """Run weakness diagnosis on the current champion."""
     from quantevoloop.config import QuantEvoLoopConfig
+    from quantevoloop.evaluation.diagnostics import diagnose as run_diagnose
 
     config = QuantEvoLoopConfig.from_yaml(config_path)
-    console.print(f"[blue]Diagnosing:[/blue] {config.champion_dir / 'strategy.py'}")
-    console.print("[yellow]Diagnosis not yet implemented. Coming in Phase 4.[/yellow]")
+    trades_path = config.champion_dir / "trades.json"
+    metrics_path = config.champion_dir / "metrics.json"
+
+    if not trades_path.exists():
+        console.print("[yellow]No champion trades found. Run evolution first.[/yellow]")
+        return
+
+    import json
+    trades = json.loads(trades_path.read_text())
+    test_trades = trades.get("test", []) or trades.get("train", [])
+
+    if not test_trades:
+        console.print("[yellow]No trades available for diagnosis.[/yellow]")
+        return
+
+    metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
+    test_metrics = metrics.get("test", {})
+
+    strategy_summary = {
+        "sharpe": test_metrics.get("sharpe", 0.0),
+        "cagr": test_metrics.get("cagr", 0.0),
+        "max_drawdown_account": test_metrics.get("max_drawdown_account", 0.0),
+        "total_trades": test_metrics.get("total_trades", 0),
+        "winrate": test_metrics.get("winrate", 0.0),
+    }
+
+    diagnostic = run_diagnose(test_trades, strategy_summary, segment="test")
+
+    table = Table(title=f"Champion Diagnosis ({len(test_trades)} trades)")
+    table.add_column("Category", style="cyan")
+    table.add_column("Details", style="white")
+
+    table.add_row("Severity", diagnostic.severity)
+    table.add_row("Dominant Exit", diagnostic.dominant_exit)
+    table.add_row("Weaknesses", str(len(diagnostic.weaknesses)))
+    table.add_row("Suggestions", str(len(diagnostic.suggestions)))
+
+    for w in diagnostic.weaknesses[:10]:
+        table.add_row(f"  [{w.tag}]", w.description)
+
+    console.print(table)
 
 
 @main.command()
@@ -176,8 +241,10 @@ def status(config_path: str):
         import json
         state = json.loads(config.state_file.read_text())
         table.add_row("Current Gen", str(state.get("generation", 0)))
-        table.add_row("Champion Sharpe", str(state.get("champion_sharpe", "N/A")))
-        table.add_row("Active Campaign", state.get("active_campaign", "None"))
+        table.add_row("Champion Sharpe", str(state.get("champion_sharpe_test", "N/A")))
+        table.add_row("Status", state.get("status", "unknown"))
+        table.add_row("Cost", f"${state.get('total_cost_usd', 0):.2f}")
+        table.add_row("Promotions", str(state.get("total_promotions", 0)))
     else:
         table.add_row("Status", "[yellow]Not initialized (run 'quantevoloop init')[/yellow]")
 
@@ -212,15 +279,83 @@ def backend_check(config_path: str):
 @click.option("--n", type=int, default=10, help="Number of iterations")
 def batch(config_path: str, n: int):
     """Run N evolution iterations in batch mode."""
-    console.print(f"[yellow]Batch mode ({n} iterations) not yet implemented. Coming in Phase 5.[/yellow]")
+    from quantevoloop.config import QuantEvoLoopConfig
+    from quantevoloop.backends import create_backend
+    from quantevoloop.gateway.coordinator import EvolutionCoordinator
+
+    config = QuantEvoLoopConfig.from_yaml(config_path)
+    bk = create_backend(config.backend)
+    eng = _create_engine(config, "mock")
+
+    coordinator = EvolutionCoordinator(config, bk, eng)
+
+    async def _run_batch():
+        state = await coordinator.run(max_generations=n)
+        return state
+
+    state = asyncio.run(_run_batch())
+    console.print(Panel(
+        f"Generations: {state.generation}\n"
+        f"Promotions: {state.total_promotions}\n"
+        f"Status: {state.status}",
+        title=f"Batch ({n} iterations) Complete",
+        border_style="green",
+    ))
 
 
 @main.command()
 @click.option("--config", "config_path", type=click.Path(exists=True),
               default="evo_workspace/config.yaml")
-def gateway(config_path: str):
-    """Start the Gateway Server with IM integration."""
-    console.print("[yellow]Gateway mode not yet implemented. Coming in Phase 5.[/yellow]")
+@click.option("--engine", type=click.Choice(["mock", "freqtrade", "backtrader", "zipline"]),
+              default="mock", help="Backtest engine to use")
+def gateway(config_path: str, engine: str):
+    """Start the Gateway Server with IM bot integration.
+
+    Launches the evolution loop + Telegram bot command handler.
+    The bot listens for /pause, /diagnose, /status, /history, etc.
+    """
+    from quantevoloop.config import QuantEvoLoopConfig
+    from quantevoloop.backends import create_backend
+    from quantevoloop.channels import IMNotifier, CommandProcessor, TelegramBotPoller
+    from quantevoloop.gateway.coordinator import EvolutionCoordinator
+
+    config = QuantEvoLoopConfig.from_yaml(config_path)
+    bk = create_backend(config.backend)
+    eng = _create_engine(config, engine)
+    notifier = IMNotifier(config.im) if (config.im.telegram_enabled or config.im.discord_enabled or config.im.webhook_enabled) else None
+
+    coordinator = EvolutionCoordinator(config, bk, eng, notifier)
+    cmd_processor = CommandProcessor(coordinator=coordinator, workspace=config.workspace_dir)
+
+    console.print(Panel(
+        f"[bold]QuantEvoLoop Gateway v{__version__}[/bold]\n\n"
+        f"Backend: {config.backend.type}\n"
+        f"Engine: {engine}\n"
+        f"Telegram Bot: {'enabled' if config.im.telegram_enabled else 'disabled'}\n"
+        f"Workspace: {config.workspace_dir}\n\n"
+        f"Bot commands: /status /pause /diagnose /history /champion /bandit /help",
+        title="Gateway Starting",
+        border_style="blue",
+    ))
+
+    async def _run_gateway():
+        tasks = []
+
+        # Start evolution loop
+        tasks.append(coordinator.run(max_generations=config.max_campaign_iter))
+
+        # Start Telegram bot poller if enabled
+        if config.im.telegram_enabled and config.im.telegram_bot_token:
+            poller = TelegramBotPoller(config.im.telegram_bot_token, cmd_processor)
+            tasks.append(poller.start())
+
+        # Run both concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                console.print(f"[red]Task error:[/red] {r}")
+
+    asyncio.run(_run_gateway())
 
 
 if __name__ == "__main__":
