@@ -104,6 +104,31 @@ quantevoloop run --max-gens 20 --lanes 3
 
 # Monitor with Streamlit dashboard
 streamlit run src/quantevoloop/dashboard/__init__.py -- --workspace ./evo_workspace
+
+# Start with Gateway + Telegram bot (interactive commands: /pause /diagnose /history)
+quantevoloop gateway --engine freqtrade
+```
+
+### Docker Quick Start
+
+```bash
+# Copy environment file and fill in your API keys
+cp .env.example .env
+
+# Run evolution (mock engine, for testing)
+docker compose up evolution
+
+# Run with Freqtrade engine
+docker compose --profile freqtrade up freqtrade-evolution
+
+# Launch dashboard
+docker compose --profile dashboard up dashboard
+
+# Launch gateway with Telegram bot
+docker compose --profile gateway up gateway
+
+# Run tests
+docker compose --profile tests up tests
 ```
 
 ## Configuration
@@ -174,7 +199,7 @@ QuantEvoLoop implements the full statistical validation pipeline from the quanti
 ## Testing
 
 ```bash
-# Run all tests (45 tests)
+# Run all tests (59 tests)
 pytest tests/ -v
 
 # Run specific module
@@ -182,6 +207,9 @@ pytest tests/test_evaluation.py -v
 
 # Run E2E integration tests
 pytest tests/test_e2e_coordinator.py -v
+
+# Run bot command tests
+pytest tests/test_bot_commands.py -v
 ```
 
 ## Roadmap
@@ -195,12 +223,14 @@ pytest tests/test_e2e_coordinator.py -v
 - [x] Diagnosis → Hypothesis → Mutation full pipeline
 - [x] Backend interface alignment (BackendMutationContext)
 - [x] Web UI dashboard (Streamlit real-time monitoring)
-- [x] Academic paper skeleton (LaTeX)
+- [x] Academic paper skeleton (LaTeX, 3 tables: config, results, mutation analysis)
 - [x] Additional backtest engine adapters (Backtrader, Zipline — skeleton)
-- [ ] Real Freqtrade end-to-end run with sample strategies
-- [ ] Experimental results with real strategies (paper Table 1)
-- [ ] IM interactive commands (/pause, /diagnose, /history)
-- [ ] Docker Compose for one-click deployment
+- [x] IM interactive commands (/pause, /diagnose, /history, /champion, /bandit, /status)
+- [x] Docker Compose for one-click deployment (evolution + gateway + dashboard)
+- [x] Sample Freqtrade strategy for e2e testing (EMA+RSI trend-following)
+- [x] CLI --engine flag (mock / freqtrade / backtrader / zipline)
+- [ ] Real Freqtrade end-to-end run with BTC/USDT data (requires market data)
+- [ ] Experimental results with real strategies (paper Table 1 — requires running experiments)
 
 ## Contributing
 

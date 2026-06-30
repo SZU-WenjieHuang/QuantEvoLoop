@@ -21,9 +21,14 @@ class FreqtradeEngine(BacktestEngine):
           --timerange <range> --export trades
     """
 
-    def __init__(self, python_bin: str = "python", config_path: Path | None = None):
+    def __init__(self, python_bin: str = "python", config_path: Path | None = None,
+                 data_splits=None, freqtrade_config: str | None = None):
         self.python_bin = python_bin
-        self.default_config = config_path
+        self.default_config = Path(config_path) if config_path else (Path(freqtrade_config) if freqtrade_config else None)
+        if data_splits:
+            self.train_timerange = data_splits.train_timerange
+            self.test_timerange = data_splits.test_timerange
+            self.holdout_timerange = data_splits.holdout_timerange
 
     async def run_backtest(
         self,

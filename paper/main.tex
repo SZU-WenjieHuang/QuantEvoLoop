@@ -1,0 +1,234 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{natbib}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{QuantEvoLoop: LLM-Guided Multi-Agent Evolutionary Framework\\
+       for Quantitative Strategy Optimization}
+
+\author{
+  Wenjie Huang\textsuperscript{1} \and
+  Co-Author\textsuperscript{2} \\[0.5em]
+  \textsuperscript{1}Shenzhen University \\
+  \textsuperscript{2}Institution Name \\
+  \texttt{email@example.com}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================
+\begin{abstract}
+We present QuantEvoLoop, a novel framework that leverages Large Language Model
+(LLM) agents as code mutation engines within a multi-agent evolutionary loop
+for automated quantitative trading strategy optimization. Unlike traditional
+hyperparameter optimizers (Optuna, Hyperopt) that search over fixed parameter
+spaces, QuantEvoLoop performs \emph{structural} mutations on strategy code,
+guided by a 5-layer statistical gate pipeline (PSR, Bootstrap CI, Walk-Forward,
+Holdout OOS) to rigorously prevent overfitting. We introduce three key
+innovations: (1)~Agent-as-Backend architecture that reuses production-grade
+CLI agents (Claude Code, Codex, Qoder CLI) for AST-level code understanding;
+(2)~UCB1 Multi-Armed Bandit for adaptive mutation type selection; and
+(3)~Cross-Campaign Knowledge Accumulation that transfers optimization insights
+across strategy campaigns. Experimental results on Freqtrade backtests
+demonstrate \textbf{XX\%} improvement in risk-adjusted returns over baseline
+strategies across \textbf{N} crypto pairs.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+Quantitative trading strategies require continuous adaptation to evolving
+market regimes. Traditional approaches rely on manual parameter tuning or
+grid-search hyperparameter optimization, both of which suffer from:
+\begin{itemize}
+  \item \textbf{Fixed search spaces}: Hyperopt/Optuna only optimize within
+        pre-defined parameter ranges.
+  \item \textbf{No structural innovation}: They cannot introduce new indicators,
+        filters, or exit conditions.
+  \item \textbf{Overfitting risk}: Without rigorous out-of-sample validation,
+        optimized parameters often degrade in live trading.
+\end{itemize}
+
+Recent advances in LLM-based code generation suggest a paradigm shift:
+treating strategy \emph{code} as a living organism that can be diagnosed,
+mutated, and evolved. This paper introduces QuantEvoLoop...
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Evolutionary Algorithms in Finance}
+Population-Based Training (PBT) has been applied to...
+
+\subsection{LLM for Code Generation}
+Recent work (Chen et al., 2023; Jimenez et al., 2024) demonstrates...
+
+\subsection{Statistical Validation in Quantitative Finance}
+Bailey and L\'{o}pez de Prado (2014) introduced the Probabilistic Sharpe
+Ratio (PSR) to address...
+
+% ============================================================
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Architecture Overview}
+QuantEvoLoop consists of five core modules:
+\begin{enumerate}
+  \item \textbf{Diagnosis Engine}: 7-type weakness detector (MFE giveback,
+        stop-loss dominance, directional asymmetry, etc.)
+  \item \textbf{Hypothesis Generator}: Maps weaknesses to structured mutation
+        hypotheses (what, why, expected effect, falsification criteria).
+  \item \textbf{Mutation Engine}: Agent-as-Backend using Claude Code / Codex /
+        Qoder CLI for AST-level code editing.
+  \item \textbf{Evaluation Pipeline}: 5-layer statistical gate cascade.
+  \item \textbf{Selection Mechanism}: UCB1 bandit + tournament selection.
+\end{enumerate}
+
+\subsection{5-Layer Statistical Gate Pipeline}
+Every candidate strategy must pass 5 sequential gates:
+\begin{align}
+  G_1&: \text{Train regression } (\hat{S}_{train} \geq S_{champ,train} \times 0.95) \\
+  G_2&: \text{Hard constraints (risk, trade count, overfit gap)} \\
+  G_3&: \text{Composite score } > 0 \\
+  G_4&: \text{PSR}(\hat{S}_{test}) > 0.85 \text{ and Bootstrap CI}_{lo} > 0 \\
+  G_5&: \text{Walk-Forward consistency + Holdout OOS gate}
+\end{align}
+
+\subsection{UCB1 Multi-Armed Bandit}
+Mutation types are treated as bandit arms...
+\begin{equation}
+  \text{UCB1}(a) = \bar{r}_a + c \sqrt{\frac{\ln T}{N_a}}
+\end{equation}
+
+\subsection{Cross-Campaign Knowledge Accumulation}
+...
+
+% ============================================================
+\section{Experimental Setup}
+\label{sec:experiments}
+
+\subsection{Datasets}
+We evaluate on cryptocurrency pairs from Binance USD-M futures:
+\begin{itemize}
+  \item \textbf{BTC/USDT}, \textbf{ETH/USDT} (2021-01-01 to 2026-01-01, 1h candles)
+  \item Train: 2022-01-01 to 2024-07-01 (30 months)
+  \item Test: 2024-07-01 to 2026-01-01 (18 months)
+  \item Holdout: 2021-01-01 to 2022-01-01 (12 months, cross-regime validation)
+  \item Walk-Forward: 3 overlapping folds from train period (10-month spans)
+\end{itemize}
+
+\subsection{Baselines}
+\begin{itemize}
+  \item \textbf{Manual Baseline}: Hand-crafted EMA+RSI trend-following strategy
+        (\texttt{examples/sample\_strategy.py})
+  \item \textbf{Optuna}: Hyperparameter TPE sampler over EMA periods, RSI thresholds,
+        stoploss, and ROI parameters (200 trials)
+  \item \textbf{Freqtrade Hyperopt}: Bayesian optimization with default settings (500 iterations)
+  \item \textbf{QuantEvoLoop (ours)}: Full pipeline with Claude Code backend,
+        3 parallel lanes, 20 generations
+\end{itemize}
+
+\subsection{Experimental Configuration}
+\begin{table}[h]
+\centering
+\caption{QuantEvoLoop experimental hyperparameters}
+\label{tab:config}
+\begin{tabular}{ll}
+\toprule
+Parameter & Value \\
+\midrule
+Backend & Claude Code CLI (max\_turns=15, timeout=300s) \\
+Parallel Lanes & 3 \\
+Max Generations & 20 \\
+Mutation Types & 8 (EXIT\_TIGHTEN, EXIT\_LOOSEN, NEW\_FILTER, BOX\_FILTER, \\
+               & COOLDOWN, PARAM\_TUNE, GENERAL\_TUNE, ENTRY\_REFINE) \\
+Selection & UCB1 Bandit + Tournament \\
+PSR Threshold (test) & $\geq 0.85$ \\
+Bootstrap CI (test) & $\geq 0.70$ \\
+Max DD Ceiling & $\leq 1.25\times$ champion DD \\
+Min Trades & $\geq 50$ \\
+Walk-Forward Folds & 3 overlapping \\
+Budget & \$50 USD \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics}
+Sharpe Ratio, CAGR, Maximum Drawdown, Win Rate, Profit Factor, Sortino Ratio.
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\begin{table}[h]
+\centering
+\caption{Comparison of strategy optimization methods on BTC/USDT}
+\label{tab:results}
+\begin{tabular}{lccccc}
+\toprule
+Method & Sharpe & CAGR & MaxDD & WinRate & Trades \\
+\midrule
+Manual Baseline     & 0.XX & XX\% & XX\% & XX\% & XXX \\
+Optuna              & 0.XX & XX\% & XX\% & XX\% & XXX \\
+Hyperopt            & 0.XX & XX\% & XX\% & XX\% & XXX \\
+\textbf{QuantEvoLoop} & \textbf{0.XX} & \textbf{XX\%} & \textbf{XX\%} & XX\% & XXX \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Mutation Type Analysis}
+...
+
+\subsection{Cost Efficiency}
+...
+
+\subsection{Limitations}
+...
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented QuantEvoLoop, a novel framework that...
+
+% ============================================================
+\bibliographystyle{plainnat}
+\begin{thebibliography}{99}
+
+\bibitem[Bailey and L\'{o}pez de Prado(2014)]{bailey2014}
+Bailey, D.H. and L\'{o}pez de Prado, M.
+``The deflated Sharpe ratio: Correcting for selection bias, backtest overfitting, and non-normality.''
+\emph{Journal of Portfolio Management}, 40(5):94--107, 2014.
+
+\bibitem[Efron and Tibshirani(1993)]{efron1993}
+Efron, B. and Tibshirani, R.J.
+\emph{An Introduction to the Bootstrap}.
+Chapman \& Hall, 1993.
+
+\bibitem[Pardo(2008)]{pardo2008}
+Pardo, R.
+\emph{The Evaluation and Optimization of Trading Strategies}.
+Wiley, 2nd edition, 2008.
+
+\end{thebibliography}
+
+\end{document}
