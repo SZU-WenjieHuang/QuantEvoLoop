@@ -1,0 +1,99 @@
+# QuantEvoLoop Docker Compose
+# One-click deployment for the evolution loop + dashboard
+
+version: "3.8"
+
+services:
+  # ─── Evolution Loop (main process) ─────────────────────
+  evolution:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: quantevoloop-evolution
+    volumes:
+      - ./evo_workspace:/app/evo_workspace
+      - ./examples:/app/examples
+      # Mount your Freqtrade config and data if using freqtrade engine:
+      # - /path/to/freqtrade/user_data:/freqtrade/user_data
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    # Default: run evolution with mock engine (for testing)
+    # Override with: docker compose run evolution run --config examples/config.e2e.yaml --engine freqtrade
+    command: ["run", "--config", "examples/config.example.yaml", "--max-gens", "5"]
+    restart: "no"
+
+  # ─── Gateway with Telegram Bot ──────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: quantevoloop-gateway
+    volumes:
+      - ./evo_workspace:/app/evo_workspace
+      - ./examples:/app/examples
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    command: ["gateway", "--config", "examples/config.example.yaml"]
+    restart: unless-stopped
+    profiles:
+      - gateway
+
+  # ─── Streamlit Dashboard ────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: quantevoloop-dashboard
+    volumes:
+      - ./evo_workspace:/app/evo_workspace
+    ports:
+      - "8501:8501"
+    command: >
+      streamlit run src/quantevoloop/dashboard/__init__.py
+      --server.address 0.0.0.0
+      --server.port 8501
+      -- --workspace ./evo_workspace
+    restart: unless-stopped
+    profiles:
+      - dashboard
+
+  # ─── Freqtrade Integration ──────────────────────────────
+  freqtrade-evolution:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: freqtrade
+    container_name: quantevoloop-freqtrade
+    volumes:
+      - ./evo_workspace:/app/evo_workspace
+      - ./examples:/app/examples
+      # Mount your freqtrade user_data directory:
+      # - /path/to/freqtrade/user_data:/freqtrade/user_data
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    command: ["run", "--config", "examples/config.e2e.yaml", "--engine", "freqtrade", "--max-gens", "10"]
+    restart: "no"
+    profiles:
+      - freqtrade
+
+  # ─── Tests ──────────────────────────────────────────────
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: quantevoloop-tests
+    command: ["pytest", "tests/", "-v"]
+    profiles:
+      - tests

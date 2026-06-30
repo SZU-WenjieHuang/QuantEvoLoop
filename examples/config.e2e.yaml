@@ -1,0 +1,36 @@
+# QuantEvoLoop E2E Config — Sample for Freqtrade
+# Run with: quantevoloop run --config examples/config.e2e.yaml --engine freqtrade
+
+workspace_dir: ./evo_workspace
+strategy_path: ./examples/sample_strategy.py
+python_bin: python
+backtest_config: null  # Set to your freqtrade config.json path
+
+data_splits:
+  holdout_start: "20210101"
+  holdout_end: "20220101"
+  train_start: "20220101"
+  train_end: "20240701"
+  test_start: "20240701"
+  test_end: "20260101"
+
+n_lanes: 3
+max_campaign_iter: 20
+
+backend:
+  type: claude-code
+  cli_path: claude
+  max_turns: 15
+  timeout_seconds: 300
+
+im:
+  telegram_enabled: false
+  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+
+cost:
+  budget_usd: 50.0
+
+checkpoint:
+  enabled: true
+  auto_save_every: 1
